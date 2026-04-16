@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Film, Music, Scissors, Zap } from "lucide-react";
+import { Film, Scissors, Zap } from "lucide-react";
 import ConvertPanel from "@/components/ConvertPanel";
 import TrimPanel from "@/components/TrimPanel";
+import ThemeToggle from "@/components/ThemeToggle";
 
 type Tab = "convert" | "trim";
 
@@ -27,9 +28,12 @@ export default function Index() {
               <p className="text-xs text-muted-foreground">Browser-powered media tools</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
-            <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
-            Runs locally
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+              <span className="inline-block w-2 h-2 rounded-full bg-accent animate-pulse" />
+              Runs locally
+            </div>
+            <ThemeToggle />
           </div>
         </div>
       </header>
