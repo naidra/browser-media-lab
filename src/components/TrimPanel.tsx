@@ -1,11 +1,18 @@
-import { useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Download, Scissors } from "lucide-react";
 import FileDropZone from "./FileDropZone";
 import MediaPreview from "./MediaPreview";
 import TrimSlider from "./TrimSlider";
 import ProgressBar from "./ProgressBar";
-import { trimMedia } from "@/lib/ffmpeg";
+import { getMediaKind, trimMedia } from "@/lib/ffmpeg";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/sonner";
+
+interface TrimResult {
+  url: string;
+  extension: string;
+  mimeType: string;
+}
 
 export default function TrimPanel() {
   const [file, setFile] = useState<File | null>(null);
@@ -13,7 +20,22 @@ export default function TrimPanel() {
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(0);
   const [progress, setProgress] = useState(-1);
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<TrimResult | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (result) {
+        URL.revokeObjectURL(result.url);
+      }
+    };
+  }, [result]);
+
+  const clearResult = useCallback(() => {
+    if (result) {
+      URL.revokeObjectURL(result.url);
+    }
+    setResult(null);
+  }, [result]);
 
   const handleDurationChange = (dur: number) => {
     setDuration(dur);
@@ -23,23 +45,36 @@ export default function TrimPanel() {
   const handleTrim = useCallback(async () => {
     if (!file) return;
     setProgress(0);
-    setResult(null);
+    clearResult();
     try {
-      const blob = await trimMedia(file, startTime, endTime, setProgress);
-      const url = URL.createObjectURL(blob);
-      setResult(url);
-      setProgress(-1);
+      const trimmed = await trimMedia(file, startTime, endTime, setProgress);
+      const url = URL.createObjectURL(trimmed.blob);
+      setResult({
+        url,
+        extension: trimmed.extension,
+        mimeType: trimmed.mimeType,
+      });
+      toast.success("Trim complete", {
+        description: `Your trimmed ${getMediaKind(file)} is ready to preview and download.`,
+      });
     } catch (err) {
       console.error("Trim failed:", err);
+      toast.error("Trim failed", {
+        description:
+          err instanceof Error
+            ? err.message
+            : "This media file could not be trimmed in the browser.",
+      });
+    } finally {
       setProgress(-1);
     }
-  }, [file, startTime, endTime]);
+  }, [clearResult, file, startTime, endTime]);
 
   const handleDownload = () => {
     if (!result || !file) return;
     const a = document.createElement("a");
-    a.href = result;
-    a.download = "trimmed_" + file.name;
+    a.href = result.url;
+    a.download = `trimmed_${file.name.replace(/\.[^.]+$/, "")}.${result.extension}`;
     a.click();
   };
 
@@ -49,7 +84,13 @@ export default function TrimPanel() {
     <div className="space-y-6">
       {!file ? (
         <FileDropZone
-          onFileSelect={(f) => { setFile(f); setResult(null); }}
+          onFileSelect={(f) => {
+            clearResult();
+            setFile(f);
+            setDuration(0);
+            setStartTime(0);
+            setEndTime(0);
+          }}
           accept="video/*,audio/*"
           label="Drop your video or audio"
           sublabel="Trim any media file to the exact length you need"
@@ -59,7 +100,13 @@ export default function TrimPanel() {
         <>
           <MediaPreview
             file={file}
-            onRemove={() => { setFile(null); setResult(null); setDuration(0); }}
+            onRemove={() => {
+              setFile(null);
+              clearResult();
+              setDuration(0);
+              setStartTime(0);
+              setEndTime(0);
+            }}
             onDurationChange={handleDurationChange}
           />
 
@@ -82,7 +129,7 @@ export default function TrimPanel() {
           <div className="flex gap-3">
             <Button
               onClick={handleTrim}
-              disabled={progress >= 0}
+              disabled={progress >= 0 || endTime <= startTime}
               className="gradient-primary text-primary-foreground hover:opacity-90 shadow-glow flex-1"
               size="lg"
             >
@@ -101,9 +148,9 @@ export default function TrimPanel() {
             <div className="rounded-xl bg-card p-4 shadow-card">
               <p className="text-sm text-muted-foreground mb-2">Preview trimmed result:</p>
               {isVideo ? (
-                <video src={result} controls className="w-full max-h-[300px] rounded-lg" />
+                <video src={result.url} controls className="w-full max-h-[300px] rounded-lg" />
               ) : (
-                <audio src={result} controls className="w-full" />
+                <audio src={result.url} controls className="w-full" />
               )}
             </div>
           )}
