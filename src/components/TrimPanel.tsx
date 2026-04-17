@@ -42,6 +42,22 @@ export default function TrimPanel() {
     setEndTime(dur);
   };
 
+  const handleFileSelect = useCallback((nextFile: File) => {
+    const mediaKind = getMediaKind(nextFile);
+    if (!mediaKind) {
+      toast.error("Unsupported file", {
+        description: "Choose a video or audio file to trim.",
+      });
+      return;
+    }
+
+    clearResult();
+    setFile(nextFile);
+    setDuration(0);
+    setStartTime(0);
+    setEndTime(0);
+  }, [clearResult]);
+
   const handleTrim = useCallback(async () => {
     if (!file) return;
     setProgress(0);
@@ -84,13 +100,7 @@ export default function TrimPanel() {
     <div className="space-y-6">
       {!file ? (
         <FileDropZone
-          onFileSelect={(f) => {
-            clearResult();
-            setFile(f);
-            setDuration(0);
-            setStartTime(0);
-            setEndTime(0);
-          }}
+          onFileSelect={handleFileSelect}
           accept="video/*,audio/*"
           label="Drop your video or audio"
           sublabel="Trim any media file to the exact length you need"
