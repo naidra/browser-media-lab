@@ -21,7 +21,7 @@ export default function Index() {
         <div className="container max-w-4xl mx-auto flex items-center justify-between py-4 px-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-glow">
-              <Film className="w-5 h-5 text-primary-foreground" />
+              <Film className="w-8 h-8 text-primary-foreground" />
             </div>
             <div>
               <h1 className="text-lg font-bold tracking-tight text-foreground">MediaForge</h1>
