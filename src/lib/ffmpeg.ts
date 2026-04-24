@@ -19,6 +19,7 @@ interface OutputPreset {
   extension: string;
   mimeType: string;
   ffmpegArgs: string[];
+  estimatedBitrateKbps?: number;
 }
 
 export interface ProcessedMediaResult {
@@ -72,6 +73,11 @@ const extractAudioPresets: Record<ExtractAudioFormat, OutputPreset> = {
   mp3: audioConversionPresets.mp3,
   wav: audioConversionPresets.wav,
   aac: audioConversionPresets.aac,
+};
+
+const DEFAULT_COMPRESSION_PROFILE = {
+  targetSizeRatio: 0.52,
+  targetRange: [0.38, 0.62] as [number, number],
 };
 
 export const VIDEO_FORMAT_OPTIONS: FormatOption<VideoConversionFormat>[] = [
@@ -238,6 +244,103 @@ export const convertVideoToAudio = async (
   return result.blob;
 };
 
+export const compressVideo = async (
+  file: File,
+  durationSeconds: number,
+  onProgress?: (progress: number) => void
+): Promise<ProcessedMediaResult> => {
+  if (getMediaKind(file) !== "video") {
+    throw new Error("Please choose a video file to compress.");
+  }
+
+  const sourceBitrate = getSourceBitrate(file.size, durationSeconds);
+  const targetTotalBitrate = getTargetBitrate(
+    sourceBitrate,
+    DEFAULT_COMPRESSION_PROFILE.targetSizeRatio,
+    256
+  );
+
+  const attempts = buildVideoCompressionAttempts(file, targetTotalBitrate);
+
+  for (const preset of attempts) {
+    const result = await transcodeFile(file, preset, onProgress);
+    if (result.blob.size < file.size) {
+      return result;
+    }
+  }
+
+  throw new Error("This video is already optimized and could not be compressed to a smaller size.");
+};
+
+export const compressAudio = async (
+  file: File,
+  durationSeconds: number,
+  onProgress?: (progress: number) => void
+): Promise<ProcessedMediaResult> => {
+  if (getMediaKind(file) !== "audio") {
+    throw new Error("Please choose an audio file to compress.");
+  }
+
+  const sourceBitrate = getSourceBitrate(file.size, durationSeconds);
+  const attempts = buildAudioCompressionAttempts(
+    file,
+    sourceBitrate,
+    DEFAULT_COMPRESSION_PROFILE.targetSizeRatio
+  );
+
+  for (const preset of attempts) {
+    const result = await transcodeFile(file, preset, onProgress);
+    if (result.blob.size < file.size) {
+      return result;
+    }
+  }
+
+  throw new Error("This audio file is already optimized and could not be compressed to a smaller size.");
+};
+
+export function getCompressionEstimate(
+  file: File,
+  durationSeconds: number
+): { minBytes: number; maxBytes: number; expectedBytes: number; outputExtension: string } | null {
+  const mediaKind = getMediaKind(file);
+  if (!mediaKind || durationSeconds <= 0) {
+    return null;
+  }
+
+  const sourceBitrate = getSourceBitrate(file.size, durationSeconds);
+  const attempts =
+    mediaKind === "video"
+      ? buildVideoCompressionAttempts(
+          file,
+          getTargetBitrate(
+            sourceBitrate,
+            DEFAULT_COMPRESSION_PROFILE.targetSizeRatio,
+            256
+          )
+        )
+      : buildAudioCompressionAttempts(
+          file,
+          sourceBitrate,
+          DEFAULT_COMPRESSION_PROFILE.targetSizeRatio
+        );
+
+  const estimatedSizes = attempts
+    .map((attempt) => getEstimatedSizeBytes(attempt, durationSeconds))
+    .filter((size): size is number => typeof size === "number")
+    .sort((a, b) => a - b);
+
+  if (estimatedSizes.length === 0) {
+    return null;
+  }
+
+  return {
+    minBytes: estimatedSizes[0],
+    maxBytes: estimatedSizes[estimatedSizes.length - 1],
+    expectedBytes: estimatedSizes[Math.min(estimatedSizes.length - 1, 1)] ?? estimatedSizes[0],
+    outputExtension: attempts[0]?.extension ?? getCompressionOutputExtension(file),
+  };
+}
+
 export function getMediaKind(file: File): MediaKind | null {
   if (file.type.startsWith("video/")) return "video";
   if (file.type.startsWith("audio/")) return "audio";
@@ -264,9 +367,13 @@ function getExtension(filename: string): string {
   return idx >= 0 ? filename.substring(idx) : "";
 }
 
+function getNormalizedExtension(filename: string): string {
+  return getExtension(filename).slice(1).toLowerCase();
+}
+
 function getTrimPreset(file: File): OutputPreset {
   const mediaKind = getMediaKind(file);
-  const normalizedExtension = getExtension(file.name).slice(1).toLowerCase();
+  const normalizedExtension = getNormalizedExtension(file.name);
 
   if (mediaKind === "audio") {
     if (normalizedExtension === "wav") return audioConversionPresets.wav;
@@ -278,6 +385,203 @@ function getTrimPreset(file: File): OutputPreset {
   if (normalizedExtension === "webm") return videoConversionPresets.webm;
   if (normalizedExtension === "mov") return videoConversionPresets.mov;
   return videoConversionPresets.mp4;
+}
+
+function getCompressionOutputExtension(file: File): string {
+  const normalizedExtension = getNormalizedExtension(file.name);
+  if (normalizedExtension === "m4a") return "aac";
+  if (normalizedExtension) return normalizedExtension;
+  return getMediaKind(file) === "video" ? "mp4" : "mp3";
+}
+
+function getSourceBitrate(sizeBytes: number, durationSeconds: number): number {
+  if (durationSeconds <= 0) {
+    throw new Error("Media duration is required for compression.");
+  }
+
+  return Math.max(32, Math.floor((sizeBytes * 8) / 1000 / durationSeconds));
+}
+
+function getTargetBitrate(sourceBitrateKbps: number, ratio: number, minBitrateKbps: number): number {
+  return Math.max(minBitrateKbps, Math.floor(sourceBitrateKbps * ratio * 0.92));
+}
+
+function buildVideoCompressionAttempts(file: File, targetTotalBitrateKbps: number): OutputPreset[] {
+  const outputExtension = getCompressionOutputExtension(file);
+  const videoShare = 0.82;
+  const audioBitrate = Math.max(48, Math.min(128, Math.floor(targetTotalBitrateKbps * 0.18)));
+  const videoBitrate = Math.max(180, Math.floor(targetTotalBitrateKbps * videoShare));
+  const lowerVideoBitrate = Math.max(140, Math.floor(videoBitrate * 0.72));
+  const lowerAudioBitrate = Math.max(40, Math.floor(audioBitrate * 0.75));
+
+  if (outputExtension === "webm") {
+    return [
+      {
+        extension: "webm",
+        mimeType: "video/webm",
+        ffmpegArgs: [
+          "-c:v", "libvpx",
+          "-deadline", "good",
+          "-cpu-used", "2",
+          "-b:v", `${videoBitrate}k`,
+          "-crf", "34",
+          "-c:a", "libvorbis",
+          "-b:a", `${audioBitrate}k`,
+        ],
+        estimatedBitrateKbps: videoBitrate + audioBitrate + 24,
+      },
+      {
+        extension: "webm",
+        mimeType: "video/webm",
+        ffmpegArgs: [
+          "-c:v", "libvpx",
+          "-deadline", "good",
+          "-cpu-used", "4",
+          "-b:v", `${lowerVideoBitrate}k`,
+          "-crf", "38",
+          "-c:a", "libvorbis",
+          "-b:a", `${lowerAudioBitrate}k`,
+        ],
+        estimatedBitrateKbps: lowerVideoBitrate + lowerAudioBitrate + 24,
+      },
+    ];
+  }
+
+  if (outputExtension === "mov") {
+    return [
+      {
+        extension: "mov",
+        mimeType: "video/quicktime",
+        ffmpegArgs: [
+          "-c:v", "mpeg4",
+          "-b:v", `${videoBitrate}k`,
+          "-maxrate", `${videoBitrate}k`,
+          "-bufsize", `${videoBitrate * 2}k`,
+          "-c:a", "aac",
+          "-b:a", `${audioBitrate}k`,
+        ],
+        estimatedBitrateKbps: videoBitrate + audioBitrate + 16,
+      },
+      {
+        extension: "mov",
+        mimeType: "video/quicktime",
+        ffmpegArgs: [
+          "-c:v", "mpeg4",
+          "-b:v", `${lowerVideoBitrate}k`,
+          "-maxrate", `${lowerVideoBitrate}k`,
+          "-bufsize", `${lowerVideoBitrate * 2}k`,
+          "-c:a", "aac",
+          "-b:a", `${lowerAudioBitrate}k`,
+        ],
+        estimatedBitrateKbps: lowerVideoBitrate + lowerAudioBitrate + 16,
+      },
+    ];
+  }
+
+  return [
+    {
+      extension: "mp4",
+      mimeType: "video/mp4",
+      ffmpegArgs: [
+        "-c:v", "mpeg4",
+        "-b:v", `${videoBitrate}k`,
+        "-maxrate", `${videoBitrate}k`,
+        "-bufsize", `${videoBitrate * 2}k`,
+        "-c:a", "aac",
+        "-b:a", `${audioBitrate}k`,
+        "-movflags", "+faststart",
+      ],
+      estimatedBitrateKbps: videoBitrate + audioBitrate + 12,
+    },
+    {
+      extension: "mp4",
+      mimeType: "video/mp4",
+      ffmpegArgs: [
+        "-c:v", "mpeg4",
+        "-b:v", `${lowerVideoBitrate}k`,
+        "-maxrate", `${lowerVideoBitrate}k`,
+        "-bufsize", `${lowerVideoBitrate * 2}k`,
+        "-c:a", "aac",
+        "-b:a", `${lowerAudioBitrate}k`,
+        "-movflags", "+faststart",
+      ],
+      estimatedBitrateKbps: lowerVideoBitrate + lowerAudioBitrate + 12,
+    },
+  ];
+}
+
+function buildAudioCompressionAttempts(
+  file: File,
+  sourceBitrateKbps: number,
+  ratio: number
+): OutputPreset[] {
+  const outputExtension = getCompressionOutputExtension(file);
+  const primaryBitrate = getTargetBitrate(sourceBitrateKbps, ratio, 48);
+  const fallbackBitrate = Math.max(40, Math.floor(primaryBitrate * 0.7));
+
+  if (outputExtension === "wav") {
+    return [
+      {
+        extension: "wav",
+        mimeType: "audio/wav",
+        ffmpegArgs: ["-vn", "-acodec", "adpcm_ima_wav"],
+        estimatedBitrateKbps: Math.max(64, Math.floor(sourceBitrateKbps * 0.28)),
+      },
+    ];
+  }
+
+  if (outputExtension === "flac") {
+    return [
+      {
+        extension: "flac",
+        mimeType: "audio/flac",
+        ffmpegArgs: ["-vn", "-acodec", "flac", "-compression_level", "12"],
+        estimatedBitrateKbps: Math.max(96, Math.floor(sourceBitrateKbps * 0.7)),
+      },
+    ];
+  }
+
+  if (outputExtension === "aac") {
+    return [
+      {
+        extension: "aac",
+        mimeType: "audio/aac",
+        ffmpegArgs: ["-vn", "-acodec", "aac", "-b:a", `${primaryBitrate}k`],
+        estimatedBitrateKbps: primaryBitrate + 6,
+      },
+      {
+        extension: "aac",
+        mimeType: "audio/aac",
+        ffmpegArgs: ["-vn", "-acodec", "aac", "-b:a", `${fallbackBitrate}k`],
+        estimatedBitrateKbps: fallbackBitrate + 6,
+      },
+    ];
+  }
+
+  return [
+    {
+      extension: "mp3",
+      mimeType: "audio/mpeg",
+      ffmpegArgs: ["-vn", "-acodec", "libmp3lame", "-b:a", `${primaryBitrate}k`],
+      estimatedBitrateKbps: primaryBitrate + 4,
+    },
+    {
+      extension: "mp3",
+      mimeType: "audio/mpeg",
+      ffmpegArgs: ["-vn", "-acodec", "libmp3lame", "-b:a", `${fallbackBitrate}k`],
+      estimatedBitrateKbps: fallbackBitrate + 4,
+    },
+  ];
+}
+
+function getEstimatedSizeBytes(preset: OutputPreset, durationSeconds: number): number | null {
+  if (!preset.estimatedBitrateKbps || durationSeconds <= 0) {
+    return null;
+  }
+
+  const dataBytes = (preset.estimatedBitrateKbps * 1000 * durationSeconds) / 8;
+  const containerOverheadBytes = Math.max(4 * 1024, Math.round(dataBytes * 0.015));
+  return Math.max(1, Math.round(dataBytes + containerOverheadBytes));
 }
 
 async function safelyDeleteFile(ff: FFmpeg, fileName: string) {

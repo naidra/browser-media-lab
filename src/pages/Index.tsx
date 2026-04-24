@@ -7,7 +7,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 type Tab = "convert" | "trim";
 
 const tabs: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
-  { id: "convert", label: "Convert", icon: <Zap className="w-5 h-5" />, desc: "Audio + video formats" },
+  { id: "convert", label: "Convert", icon: <Zap className="w-5 h-5" />, desc: "Convert + compress media" },
   { id: "trim", label: "Trim", icon: <Scissors className="w-5 h-5" />, desc: "Cut media" },
 ];
 
@@ -41,12 +41,12 @@ export default function Index() {
       {/* Hero */}
       <section className="container max-w-4xl mx-auto px-4 pt-12 pb-8 text-center">
         <h2 className="text-4xl md:text-5xl font-bold tracking-tight">
-          <span className="text-gradient">Convert & Trim</span>
+          <span className="text-gradient">Convert, Compress & Trim</span>
           <br />
           <span className="text-foreground">your media instantly</span>
         </h2>
         <p className="mt-4 text-muted-foreground max-w-lg mx-auto">
-          Convert formats, extract audio, and trim clips with no uploads and no servers.
+          Convert formats, compress file sizes, extract audio, and trim clips with no uploads and no servers.
           Everything runs in your browser using WebAssembly, so your files stay on your device.
         </p>
       </section>
