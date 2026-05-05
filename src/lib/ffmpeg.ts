@@ -109,8 +109,8 @@ export const getFFmpeg = async (): Promise<FFmpeg> => {
     });
   }
 
-  const coreURL = await toBlobURL("/ffmpeg/ffmpeg-core.js", "text/javascript");
-  const wasmURL = await toBlobURL("/ffmpeg/ffmpeg-core.wasm", "application/wasm");
+  const coreURL = await toBlobURL(`${location.href}/ffmpeg/ffmpeg-core.js`, "text/javascript");
+  const wasmURL = await toBlobURL(`${location.href}/ffmpeg/ffmpeg-core.wasm`, "application/wasm");
 
   await ffmpeg.load({ coreURL, wasmURL });
   return ffmpeg;
