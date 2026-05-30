@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRightLeft, Download, Minimize2, Music, Video, Zap } from "lucide-react";
+import { ArrowRightLeft, Download, Image, Minimize2, Music, Video, Zap } from "lucide-react";
 import FileDropZone from "./FileDropZone";
 import MediaPreview from "./MediaPreview";
 import ProgressBar from "./ProgressBar";
@@ -11,6 +11,7 @@ import {
   compressVideo,
   convertAudioFormat,
   convertVideoFormat,
+  convertVideoToGif,
   convertVideoToAudio,
   getCompressionEstimate,
   getMediaKind,
@@ -27,6 +28,7 @@ type ConvertMode =
   | "convert-video"
   | "convert-audio"
   | "extract-audio"
+  | "create-gif"
   | "compress-video"
   | "compress-audio";
 
@@ -34,7 +36,7 @@ type ConversionResult = {
   url: string;
   extension: string;
   mimeType: string;
-  outputKind: "video" | "audio";
+  outputKind: "video" | "audio" | "image";
   sizeBytes: number;
 };
 
@@ -59,6 +61,7 @@ export default function ConvertPanel() {
   const mediaKind = file ? getMediaKind(file) : null;
   const isCompressionMode =
     mode === "compress-video" || mode === "compress-audio";
+  const isGifMode = mode === "create-gif";
 
   const formatOptions =
     mode === "convert-video"
@@ -79,6 +82,8 @@ export default function ConvertPanel() {
       ? `Convert to ${videoFormat.toUpperCase()}`
       : mode === "convert-audio"
         ? `Convert to ${audioFormat.toUpperCase()}`
+        : mode === "create-gif"
+          ? "Create GIF"
         : mode === "compress-video"
           ? "Compress video"
           : mode === "compress-audio"
@@ -88,6 +93,8 @@ export default function ConvertPanel() {
   const progressLabel =
     mode === "extract-audio"
       ? "Extracting audio..."
+      : mode === "create-gif"
+        ? "Creating GIF..."
       : isCompressionMode
         ? "Compressing media..."
         : "Converting format...";
@@ -132,7 +139,7 @@ export default function ConvertPanel() {
       let blob: Blob;
       let extension: string;
       let mimeType: string;
-      let outputKind: "video" | "audio";
+      let outputKind: "video" | "audio" | "image";
 
       if (mode === "convert-video") {
         blob = await convertVideoFormat(file, videoFormat, setProgress);
@@ -150,6 +157,12 @@ export default function ConvertPanel() {
         extension = compressed.extension;
         mimeType = compressed.mimeType;
         outputKind = "video";
+      } else if (mode === "create-gif") {
+        const gif = await convertVideoToGif(file, setProgress);
+        blob = gif.blob;
+        extension = gif.extension;
+        mimeType = gif.mimeType;
+        outputKind = "image";
       } else if (mode === "compress-audio") {
         const compressed = await compressAudio(file, duration, setProgress);
         blob = compressed.blob;
@@ -165,22 +178,38 @@ export default function ConvertPanel() {
 
       const url = URL.createObjectURL(blob);
       setResult({ url, extension, mimeType, outputKind, sizeBytes: blob.size });
-      toast.success(isCompressionMode ? "Compression complete" : "Conversion complete", {
+      toast.success(
+        isCompressionMode
+          ? "Compression complete"
+          : isGifMode
+            ? "GIF created"
+            : "Conversion complete",
+        {
         description:
           isCompressionMode
             ? `Your smaller ${extension.toUpperCase()} ${outputKind} file is ready to preview and download.`
+            : isGifMode
+              ? "Your animated GIF is ready to preview and download."
             : outputKind === "video"
               ? `Your ${extension.toUpperCase()} video is ready to preview and download.`
               : `Your ${extension.toUpperCase()} audio is ready to preview and download.`,
-      });
+        }
+      );
     } catch (error) {
       console.error("Conversion failed:", error);
-      toast.error(isCompressionMode ? "Compression failed" : "Conversion failed", {
+      toast.error(
+        isCompressionMode
+          ? "Compression failed"
+          : isGifMode
+            ? "GIF creation failed"
+            : "Conversion failed",
+        {
         description:
           error instanceof Error
             ? error.message
             : "This file could not be processed in the browser.",
-      });
+        }
+      );
     } finally {
       setProgress(-1);
     }
@@ -211,6 +240,12 @@ export default function ConvertPanel() {
             title: "Compress video size",
             description: "Shrink the file with automatic output settings.",
             icon: <Minimize2 className="h-4 w-4 text-primary" />,
+          },
+          {
+            id: "create-gif" as const,
+            title: "Create animated GIF",
+            description: "Export the first 8 seconds as a looping GIF.",
+            icon: <Image className="h-4 w-4 text-accent" />,
           },
           {
             id: "extract-audio" as const,
@@ -271,7 +306,7 @@ export default function ConvertPanel() {
               </span>
             </div>
 
-            <div className={`grid gap-3 ${mediaKind === "video" ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
+            <div className={`grid gap-3 ${mediaKind === "video" ? "md:grid-cols-4" : "md:grid-cols-2"}`}>
               {modeCards.map((card) => (
                 <button
                   key={card.id}
@@ -293,7 +328,7 @@ export default function ConvertPanel() {
               ))}
             </div>
 
-            {!isCompressionMode && (
+            {!isCompressionMode && !isGifMode && (
               <div className="space-y-3">
                 <label className="text-sm font-medium text-muted-foreground">
                   Output Format
@@ -399,7 +434,13 @@ export default function ConvertPanel() {
                   )}
                 </div>
               </div>
-              {result.outputKind === "video" ? (
+              {result.outputKind === "image" ? (
+                <img
+                  src={result.url}
+                  alt="Generated animated GIF"
+                  className="w-full max-h-[320px] rounded-lg bg-background object-contain"
+                />
+              ) : result.outputKind === "video" ? (
                 <video
                   src={result.url}
                   controls

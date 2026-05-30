@@ -244,6 +244,41 @@ export const convertVideoToAudio = async (
   return result.blob;
 };
 
+export const convertVideoToGif = async (
+  file: File,
+  onProgress?: (progress: number) => void
+): Promise<ProcessedMediaResult> => {
+  if (getMediaKind(file) !== "video") {
+    throw new Error("GIF export is only available for video files.");
+  }
+
+  const inputName = `input${getExtension(file.name) || ".bin"}`;
+  const outputName = "output.gif";
+
+  return runFFmpegJob(onProgress, async (ff) => {
+    await ff.writeFile(inputName, await fetchFile(file));
+
+    try {
+      await ff.exec([
+        "-i", inputName,
+        "-t", "8",
+        "-vf", "fps=12,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+        "-loop", "0",
+        outputName,
+      ]);
+      const data = await ff.readFile(outputName);
+      return {
+        blob: new Blob([data], { type: "image/gif" }),
+        extension: "gif",
+        mimeType: "image/gif",
+      };
+    } finally {
+      await safelyDeleteFile(ff, inputName);
+      await safelyDeleteFile(ff, outputName);
+    }
+  });
+};
+
 export const compressVideo = async (
   file: File,
   durationSeconds: number,
